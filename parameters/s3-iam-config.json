@@ -1,0 +1,18 @@
+[
+  {
+    "ParameterKey" : "Environment",
+    "ParameterValue" : "dev"
+  },
+  {
+    "ParameterKey": "NetworkStackName",
+    "ParameterValue" : "vpc-config"
+  },
+  {
+    "ParameterKey" : "DemoConfigS3BucketName",
+    "ParameterValue" : "<input_your_unique_bucket_name>"
+  },
+  {
+    "ParameterKey" : "KMSStackName",
+    "ParameterValue" : "kms-config"
+  }
+]

@@ -1,0 +1,212 @@
+# Copyright 2021 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# Permission is hereby granted, free of charge, to any person obtaining a copy of this
+# software and associated documentation files (the "Software"), to deal in the Software
+# without restriction, including without limitation the rights to use, copy, modify,
+# merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
+# permit persons to whom the Software is furnished to do so.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+# PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+# HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+# SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+AWSTemplateFormatVersion: "2010-09-09"
+Description: 'This template will deploy a sample EC2 ImageBuilder pipeline that will generate an Docker Container'
+
+Parameters:
+  Environment:
+    Type: String
+    Description: >-
+      The values allowed for demo
+    AllowedValues:
+      - 'dev'
+      - 'sandbox'
+    Default: sandbox
+
+  ImageBuilderBucketName:
+    Type: String
+    Description: 'Enter the Name of the bucket where ImageBuilder Config lives'
+    Default: 'demo1284149381'
+
+  NetworkStackName:
+    Description: 'Stack name which has all of the VPC configuration'
+    Type: String
+    Default: 'vpc-config'
+
+  KMSStackName:
+    Type: String
+    Description: 'Stack name which has all of the KMS configuration'
+    Default: 'kms-config'
+
+  S3ConfigStackName:
+    Type: String
+    Description: 'Stack name which has all of the Nginx S3 configuration'
+    Default: 's3-iam-config'
+
+  ImageBuilderECRName:
+    Type: String
+    Description: 'Image Builder Elastic container registry.'
+    Default: 'demo-java-ib000'
+
+Resources:
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub '${AWS::StackName}-EC2ImageBuilder-Profile'
+      Path: /
+      Roles:
+        - Fn::ImportValue: !Sub "${S3ConfigStackName}-Image-Builder-Role-Name"
+
+  ImageBuilderSG:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'Linux EC2 Security Group'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          CidrIp: 0.0.0.0/0
+          FromPort: 443
+          ToPort: 443
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 0
+          ToPort: 65535
+          CidrIp: 0.0.0.0/0
+      VpcId:
+        Fn::ImportValue: !Sub "${NetworkStackName}-VPCID"
+
+  ImageBuilderRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Ref ImageBuilderECRName
+
+  ImageBuilderSNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      KmsMasterKeyId:
+        Fn::ImportValue: !Sub "${KMSStackName}-KeyId"
+      TopicName: "ContainerImageBuilderTopic"
+
+  Component:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: !Sub '${AWS::StackName}-Docker-Component'
+      Platform: Linux
+      Version: 1.0.3
+      Description: 'This component is a required object.'
+      ChangeDescription: 'Initial Version'
+      KmsKeyId:
+        Fn::ImportValue: !Sub "${KMSStackName}-KMS-ARN"
+      Tags:
+        build: helloworld
+      Uri: !Sub 's3://${ImageBuilderBucketName}/component.yml'
+
+  ContainerRecipe:
+    Type: 'AWS::ImageBuilder::ContainerRecipe'
+    DependsOn: ImageBuilderRepository
+    Properties:
+      Name: !Sub '${AWS::StackName}-Container-Recipe'
+      Version: '1.0.3'
+      ParentImage: 'amazonlinux:latest'
+      Description: 'This recipe will create a container from an Alpine base and Java.'
+      ContainerType: 'DOCKER'
+      Components:
+        - ComponentArn: !Ref Component
+      TargetRepository:
+        Service: 'ECR'
+        RepositoryName: !Ref ImageBuilderRepository
+      DockerfileTemplateUri: !Sub s3://${ImageBuilderBucketName}/Dockerfile
+      # WorkingDirectory: "/app/DemoRepo/java"
+      KmsKeyId:
+        Fn::ImportValue: !Sub "${KMSStackName}-KMS-ARN"
+      Tags:
+        build: 'docker-java-container'
+
+  Infrastructure:
+    Type: AWS::ImageBuilder::InfrastructureConfiguration
+    Properties:
+      Name: !Sub '${AWS::StackName}-LinuxCis-Infrastructure'
+      Description: 'This infrastructure configuration will launch into our custom ImageBuilder VPC'
+      InstanceProfileName: !Ref InstanceProfile
+      SecurityGroupIds:
+        - !Ref ImageBuilderSG
+      SubnetId:
+        Fn::ImportValue: !Sub "${NetworkStackName}-PublicSubnet1AID"
+      TerminateInstanceOnFailure: false
+      SnsTopicArn: !Ref ImageBuilderSNSTopic
+      InstanceTypes:
+        - t3.medium
+        - t3.large
+      Logging:
+        S3Logs:
+          S3BucketName: !Ref ImageBuilderBucketName
+          S3KeyPrefix: 'imagebuilder'
+
+  ContainerDistribution:
+    Type: AWS::ImageBuilder::DistributionConfiguration
+    Properties:
+      Name: !Sub '${AWS::StackName}-Container-Distribution'
+      Description: 'This distribution configuration will deploy the demo Container to the current region'
+      Distributions:
+        - Region: !Ref 'AWS::Region'
+          ContainerDistributionConfiguration:
+            Description: 'This distribution configuration will upload the demo Container Image to a Repository'
+            TargetRepository:
+              Service: ECR
+              RepositoryName: !Ref ImageBuilderRepository
+      Tags:
+        DistributionConfigurationDemoType: 'docker-java-container'
+        DistributionConfigurationTest: 'latest'
+
+  Pipeline:
+    Type: AWS::ImageBuilder::ImagePipeline
+    Properties:
+      Name: !Sub '${AWS::StackName}-docker-java-container'
+      Description: 'Deploys a sample Docker java container image to current region'
+      Status: ENABLED
+      ContainerRecipeArn: !Ref ContainerRecipe
+      InfrastructureConfigurationArn: !Ref Infrastructure
+      DistributionConfigurationArn: !Ref ContainerDistribution
+      ImageTestsConfiguration:
+        ImageTestsEnabled: false
+        TimeoutMinutes: 60
+      # Schedule:
+      #   ScheduleExpression: ‘cron(0 0 * * ? *)’ # every day at 12:00am UTC
+      #   PipelineExecutionStartCondition: 'EXPRESSION_MATCH_ONLY'
+
+  ImageBuilderSSMParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /demo/imagebuilderarn
+      Type: String
+      Value: !Ref Pipeline
+      Description: SSM Parameter for the Image Builder Pipeline ARN.
+
+  ImageVersionSSMParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /demo/image/version
+      Type: String
+      Value: '1.0.0'
+      Description: SSM Parameter for the Docker Image Version.
+
+Outputs:
+
+  ImageBuilderPipelinearn:
+    Description: Image Builder Pipeline Arn
+    Value: !Ref Pipeline
+    Export:
+      Name: !Sub '${AWS::StackName}-IB-Pipeline-Arn'
+
+  ImageBuilderRepositoryName:
+    Description: Image Builder Pipeline Arn
+    Value: !Ref ImageBuilderRepository
+    Export:
+      Name: !Sub '${AWS::StackName}-ECR-Name'
+
+  ImageBuilderRepository:
+    Description: Image Builder Pipeline Arn
+    Value: !GetAtt ImageBuilderRepository.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-ECR-Arn'

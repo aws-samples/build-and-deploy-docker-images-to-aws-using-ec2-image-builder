@@ -1,0 +1,29 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+name: 'Component file'
+description: 'This is a sample component the different phases of the file.'
+schemaVersion: 1.0
+phases:
+  - name: build
+    steps:
+      - name: BuildDebug
+        action: ExecuteBash
+        inputs:
+          commands:
+            - sudo echo "BuildDebug section"
+
+  - name: validate
+    steps:
+      - name: ValidateDebug
+        action: ExecuteBash
+        inputs:
+          commands:
+            - sudo echo "ValidateDebug section"
+
+  - name: test
+    steps:
+      - name: TestDebug
+        action: ExecuteBash
+        inputs:
+          commands:
+            - sudo echo "TestDebug section"

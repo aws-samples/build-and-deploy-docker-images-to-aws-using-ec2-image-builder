@@ -1,0 +1,10 @@
+[
+  {
+  	"ParameterKey": "KeyName",
+  	"ParameterValue": "DemoKey"
+  },
+  {
+    "ParameterKey": "UserARN",
+    "ParameterValue": "arn:aws:iam::<input_your_account_id>:root"
+  }
+]
