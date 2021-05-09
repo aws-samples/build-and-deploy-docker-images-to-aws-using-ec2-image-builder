@@ -1,0 +1,223 @@
+# Copyright 2021 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# Permission is hereby granted, free of charge, to any person obtaining a copy of this
+# software and associated documentation files (the "Software"), to deal in the Software
+# without restriction, including without limitation the rights to use, copy, modify,
+# merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
+# permit persons to whom the Software is furnished to do so.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+# PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+# HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+# SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  This template creates the roles utilized for setting up the
+  Docker Image Builder Pipeline.
+
+Parameters:
+
+  Environment:
+    AllowedValues:
+      - 'dev'
+      - 'sandbox'
+    Type: String
+    Description: 'Set environment in which the VPC will be created'
+    Default: sandbox
+
+  DemoConfigS3BucketName:
+    Type: String
+
+  EC2ImageBuilderRoleName:
+    Type: String
+    Default: EC2ImageBuilderRole
+
+  NetworkStackName:
+    Type: String
+    Description: Stack name which has all of the VPC configuration
+
+  KMSStackName:
+    Type: String
+    Description: Stack name which has all of the KMS configuration
+
+Resources:
+
+# S3 Bucket where Nginx Config and Image Builder Config will live
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref DemoConfigS3BucketName
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID:
+                Fn::ImportValue: !Sub "${KMSStackName}-KeyId"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+
+  ImageBuilderIamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref EC2ImageBuilderRoleName
+      Description: 'This role will grant EC2 ImageBuilder minimum neccessary permissions to allow pipelines to execute'
+      MaxSessionDuration: 3600 # in seconds
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+                - ssm.amazonaws.com
+                - imagebuilder.amazonaws.com
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/EC2InstanceProfileForImageBuilder'
+        - 'arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore'
+      Policies:
+        - PolicyName: GrantS3Read
+          PolicyDocument:
+            Statement:
+              - Sid: GrantS3Read
+                Effect: Allow
+                Action:
+                  - s3:List*
+                  - s3:Get*
+                  - s3:Put*
+                Resource: !Sub 'arn:aws:s3:::${S3Bucket}*'
+        - PolicyName: ListsAndDescribes
+          PolicyDocument:
+            Statement:
+              - Sid: DescribesLists
+                Effect: Allow
+                Resource: '*'
+                Action:
+                  - ec2:DescribeImages
+                  - codecommit:GitPush
+                  - codecommit:GitPull
+        - PolicyName: DecryptKms
+          PolicyDocument:
+            Statement:
+              - Sid: DecryptKms
+                Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:Encrypt
+                  - kms:GenerateDataKey*
+                  - ec2:DescribeImages
+                  - ssm:PutParameter
+                Resource: '*'
+        - PolicyName: GrantSsm
+          PolicyDocument:
+            Statement:
+              - Sid: GrantSsm
+                Effect: Allow
+                Action:
+                  - ssm:SendCommand
+                Resource:
+                  - 'arn:aws:ssm:us-east-1::document/AmazonInspector-ManageAWSAgent'
+                  - !Sub 'arn:aws:ec2:us-east-1:${AWS::AccountId}:*/*'
+        - PolicyName: Ec2Tags
+          PolicyDocument:
+            Statement:
+              - Sid: TagOnCreate
+                Effect: Allow
+                Action:
+                  - ec2:CreateTags
+                  - ec2:RunInstances
+                Resource: !Sub 'arn:aws:ec2:us-east-1:${AWS::AccountId}:*/*'
+        - PolicyName: ImageBuilderPermissions
+          PolicyDocument:
+            Statement:
+              - Sid: ImageBuilderPermissions
+                Effect: Allow
+                Action:
+                  - imagebuilder:GetContainerRecipe
+                  - ecr:GetAuthorizationToken
+                Resource: '*'
+        - PolicyName: ManageRepositoryContents
+          PolicyDocument:
+            Statement:
+              - Sid: ManageRepositoryContents
+                Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:GetRepositoryPolicy
+                  - ecr:DescribeRepositories
+                  - ecr:ListImages
+                  - ecr:DescribeImages
+                  - ecr:BatchGetImage
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:PutImage
+                Resource: !Sub 'arn:aws:ecr:us-east-1:${AWS::AccountId}:*/*'
+        - PolicyName: RegisterContainerInstance
+          PolicyDocument:
+            Statement:
+              - Sid: RegisterContainerInstance
+                Effect: Allow
+                Action:
+                  - ecs:RegisterContainerInstance
+                  - ecs:CreateCluster
+                  - ec2:DescribeTags
+                  - ecs:CreateCluster
+                  - ecs:DeregisterContainerInstance
+                  - ecs:DiscoverPollEndpoint
+                  - ecs:Poll
+                  - ecs:RegisterContainerInstance
+                  - ecs:StartTelemetrySession
+                  - ecs:UpdateContainerInstancesState
+                  - ecs:Submit*
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:ec2:us-east-1:${AWS::AccountId}:*/*'
+                  - !Sub 'arn:aws:ecs:us-east-1:${AWS::AccountId}:*/*'
+
+  DemoRepo:
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      RepositoryName: DemoRepo
+      RepositoryDescription: 'This is a repository for the docker image builder pipeline.'
+
+Outputs:
+
+  DemoRepo:
+    Value: !GetAtt DemoRepo.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-Demo-Repo-Name"
+
+  ImageBuilderRoleArn:
+    Value: !GetAtt ImageBuilderIamRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-Image-Builder-Role-ARN"
+
+  ImageBuilderRoleName:
+    Value: !Ref ImageBuilderIamRole
+    Export:
+      Name: !Sub "${AWS::StackName}-Image-Builder-Role-Name"
+
+  S3BucketArn:
+    Description: S3 Bucket ARN
+    Value: !GetAtt S3Bucket.Arn
+    Export:
+      Name:
+        Fn::Sub: "${AWS::StackName}-Bucket-ARN"
+
+  S3BucketName:
+    Description: S3 Bucket Name
+    Value: !Ref S3Bucket
+    Export:
+      Name:
+        Fn::Sub: "${AWS::StackName}-Bucket-Name"
