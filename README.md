@@ -31,7 +31,7 @@ You use the following CloudFormation templates to deploy several resources:
 
 
 ## How to use?
-To deploy this project follow the step by step instructions found here: [https://aws.amazon.com/blogs/devops/build-and-deploy-docker-images-to-aws-using-ec2-image-builder/]
+To deploy this project follow the step by step instructions found here: (https://aws.amazon.com/blogs/devops/build-and-deploy-docker-images-to-aws-using-ec2-image-builder/)
 
 ## Security
 
